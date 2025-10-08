@@ -170,20 +170,27 @@
       return null;
     }
 
-    async function geocodePDOK(addressString) {
-      // PDOK Locatieserver free endpoint – returns docs with centroide_ll as "POINT(lon lat)"
-      const url = new URL('https://geodata.nationaalgeoregister.nl/locatieserver/v3/free');
-      url.searchParams.set('q', addressString);
-      url.searchParams.set('fq', 'type:adres');
-      const res = await fetch(url.toString());
-      if (!res.ok) throw new Error(`Geocoding faalde: ${res.status} ${res.statusText}`);
-      const data = await res.json();
-      const doc = data.response && data.response.docs && data.response.docs[0];
-      if (!doc || !doc.centroide_ll) throw new Error('Geen coordinaten gevonden voor: ' + addressString);
-      const match = doc.centroide_ll.match(/POINT\(([-0-9.]+) ([0-9.]+)\)/);
-      if (!match) throw new Error('Kon POINT niet parsen');
-      return { lon: parseFloat(match[1]), lat: parseFloat(match[2]), doc };
-    }
+async function geocodePDOK(addressString) {
+  // PDOK Locatieserver v3.1 free endpoint – geeft docs terug met o.a. 'centroide_ll' als "POINT(lon lat)"
+  const url = new URL('https://api.pdok.nl/bzk/locatieserver/search/v3_1/free');
+  url.searchParams.set('q', addressString);
+  url.searchParams.set('fq', 'type:adres');
+  // optioneel wat strakker en sneller alleen de velden die we nodig hebben:
+  url.searchParams.set('fl', 'centroide_ll,centroide_rd,weergavenaam,score');
+  url.searchParams.set('rows', '1');
+
+  const res = await fetch(url.toString());
+  if (!res.ok) throw new Error(`Geocoding faalde: ${res.status} ${res.statusText}`);
+
+  const data = await res.json();
+  const doc = data?.response?.docs?.[0];
+  if (!doc || !doc.centroide_ll) throw new Error('Geen coördinaten gevonden voor: ' + addressString);
+
+  const match = doc.centroide_ll.match(/POINT\\(([-0-9.]+) ([0-9.]+)\\)/);
+  if (!match) throw new Error('Kon POINT niet parsen');
+
+  return { lon: parseFloat(match[1]), lat: parseFloat(match[2]), doc };
+}
 
     function addressFromBasisprofiel(bp) {
       // Zoek adres in embedded eigenaar/hoofdvestiging
