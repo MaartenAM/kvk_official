@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>KVK Zoeken + OpenLayers Plot (Test)</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@latest/ol.css" />
+  
   <style>
     body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
     header { padding: 12px 16px; border-bottom: 1px solid #eee; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
@@ -60,10 +60,7 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/ol@latest/dist/ol.js"></script>
-  <script>
-    // --- OpenLayers kaart ---
-    const map = new ol.Map({
-      target: 'map',
+  <s target: 'map',
       layers: [
         new ol.layer.Tile({ source: new ol.source.OSM() })
       ],
@@ -199,9 +196,6 @@
       return null;
     }
 
-      return fmt(bezoek) || fmt(post) || null;
-    }
-
     // UI refs
     const apiBaseEl = document.getElementById('apiBase');
     const apiKeyEl = document.getElementById('apiKey');
@@ -295,72 +289,8 @@
         a.textContent = 'Basisprofiel (JSON)';
         row.appendChild(a);
       }
-
-      card.appendChild(row);
-      resultsEl.appendChild(card);
-      summaryEl.textContent = `Basisprofiel geladen (${bp.kvkNummer})`;
-    }
-
-        card.appendChild(row);
-
-        // Adres preview indien aanwezig in zoekresultaat
-        const binnen = r.adres?.binnenlandsAdres?.straatnaam || r.adres?.binnenlandsAdres?.plaats ? document.createElement('div') : null;
-        if (binnen) {
-          binnen.className = 'muted';
-          const straat = r.adres?.binnenlandsAdres?.straatnaam || '';
-          const plaats = r.adres?.binnenlandsAdres?.plaats || '';
-          binnen.innerHTML = `<span class="badge">adres (globaal):</span> ${straat} ${plaats}`;
-          card.appendChild(binnen);
-        }
-
-        resultsEl.appendChild(card);
-      });
-    }
-
-    btnGet.addEventListener('click', async () => {
+btnGet.addEventListener('click', async () => {
       vectorSource.clear();
+
       resultsEl.innerHTML = '';
-      const base = apiBaseEl.value;
-      const apikey = apiKeyEl.value.trim();
-      const kvk = kvkInputEl.value.trim();
-      const useGeo = !!useGeoDataEl.checked;
-      if (!kvk) { showError('Vul een KVK-nummer in.'); return; }
-
-      try {
-        showStatus('Basisprofiel ophalen…');
-        const bp = await kvkBasisprofiel({ base, apikey, kvkNummer: kvk, geoData: useGeo });
-        renderBasisprofiel(bp, { base, apikey, usedGeo: useGeo });
-        showStatus('');
-      } catch (e) {
-        const d = e.details;
-        if (d) {
-          showError(`Basisprofiel fout (${d.status} ${d.statusText})
-URL: ${d.url}
-Body: ${d.body?.slice(0,500) || '(leeg)'}
-Tip: controleer API key / test endpoint / KVK-nummer.`);
-        } else {
-          showError(e.message || 'Onbekende fout');
-        }
-        showStatus('');
-      }
-    });
-      resultsEl.innerHTML = '';
-      const base = apiBaseEl.value;
-      const apikey = apiKeyEl.value.trim();
-      const field = searchFieldEl.value;
-      const value = searchValueEl.value.trim();
-      if (!value) { showError('Vul een zoekwaarde in.'); return; }
-
-      try {
-        showStatus('Zoeken…');
-        const data = await kvkSearch({ base, apikey, field, value, pagina:1, perPagina:10 });
-        renderResults(data, { base, apikey });
-        showStatus('');
-      } catch (e) {
-        showError(e.message);
-        showStatus('');
-      }
-    });
-
-    // Demo: prefill met jouw voorbeeld
-    kvkInputEl.value = '69599068';
+      const base = apiBaseEl.value
