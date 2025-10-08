@@ -52,7 +52,7 @@
   <main>
     <aside id="sidebar">
       <div class="section">
-        <div id="summary" class="muted">Geef een KVK-nummer en klik “Haal basisprofiel op”. Klik daarna “Plot op kaart”.</div>
+        <div id="summary" class="muted">Geef een KVK-nummer en klik "Haal basisprofiel op". Klik daarna "Plot op kaart".</div>
         <div id="results"></div>
       </div>
     </aside>
@@ -96,7 +96,15 @@
     async function kvkBasisprofiel({ base, apikey, kvkNummer, geoData=false }) {
       const url = new URL(`${base}/api/v1/basisprofielen/${encodeURIComponent(kvkNummer)}`);
       url.searchParams.set('geoData', String(geoData));
-      const res = await fetch(url.toString(), { headers: { 'apikey': apikey } });
+      
+      // CORS proxy toevoegen
+      const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url.toString())}`;
+      
+      const res = await fetch(proxyUrl, { 
+        headers: { 'apikey': apikey },
+        method: 'GET'
+      });
+      
       if (!res.ok) {
         let body = '';
         try { body = await res.text(); } catch {}
@@ -156,7 +164,7 @@
       return null;
     }
 
-        async function geocodePDOK(addressString) {
+    async function geocodePDOK(addressString) {
       // PDOK Locatieserver free endpoint – returns docs with centroide_ll as "POINT(lon lat)"
       const url = new URL('https://geodata.nationaalgeoregister.nl/locatieserver/v3/free');
       url.searchParams.set('q', addressString);
