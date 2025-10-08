@@ -28,7 +28,7 @@
 </head>
 <body>
   <header>
-    <h1>KVK Zoeken → Plot op kaart (Test)</h1>
+    <h1>KVK Basisprofiel → Plot op kaart (Test)</h1>
     <div class="controls">
       <label>API-base
         <select id="apiBase">
@@ -39,22 +39,20 @@
       <label style="min-width:280px;">API key
         <input id="apiKey" value="l7xx1f2691f2520d487b902f4e0b57a0b197" />
       </label>
-      <label>Zoekveld
-        <select id="searchField">
-          <option value="kvkNummer">kvkNummer</option>
-          <option value="naam">naam</option>
-          <option value="plaats">plaats</option>
-        </select>
+      <label class="row" title="Gebruik KVK geoData voor coordinaten (zo beschikbaar)">
+        <input type="checkbox" id="useGeoData" /> geoData gebruiken
       </label>
-      <input id="searchValue" placeholder="bv. 90002520 of 'Beverwijk'" />
-      <button id="btnSearch">Zoeken</button>
+      <label>KVK-nummer
+        <input id="kvkInput" placeholder="bijv. 69599068" />
+      </label>
+      <button id="btnGet">Haal basisprofiel op</button>
       <span id="status" class="muted"></span>
     </div>
   </header>
   <main>
     <aside id="sidebar">
       <div class="section">
-        <div id="summary" class="muted">Voer een zoekopdracht uit. Resultaten verschijnen hieronder; klik “Plot op kaart”.</div>
+        <div id="summary" class="muted">Geef een KVK-nummer en klik “Haal basisprofiel op”. Klik daarna “Plot op kaart”.</div>
         <div id="results"></div>
       </div>
     </aside>
@@ -94,25 +92,71 @@
     }
 
     // --- Helpers ---
-    async function kvkSearch({ base, apikey, field, value, pagina=1, perPagina=10 }) {
-      const url = new URL(`${base}/api/v2/zoeken`);
-      url.searchParams.set(field, value);
-      url.searchParams.set('pagina', pagina);
-      url.searchParams.set('resultatenPerPagina', perPagina);
-      const res = await fetch(url.toString(), { headers: { 'apikey': apikey } });
-      if (!res.ok) throw new Error(`Zoeken faalde: ${res.status} ${res.statusText}`);
-      return res.json();
-    }
-
+    
     async function kvkBasisprofiel({ base, apikey, kvkNummer, geoData=false }) {
-      const url = new URL(`${base}/api/v1/basisprofielen/${kvkNummer}`);
+      const url = new URL(`${base}/api/v1/basisprofielen/${encodeURIComponent(kvkNummer)}`);
       url.searchParams.set('geoData', String(geoData));
       const res = await fetch(url.toString(), { headers: { 'apikey': apikey } });
-      if (!res.ok) throw new Error(`Basisprofiel faalde: ${res.status} ${res.statusText}`);
+      if (!res.ok) {
+        let body = '';
+        try { body = await res.text(); } catch {}
+        const err = new Error(`Basisprofiel request faalde`);
+        err.details = { status: res.status, statusText: res.statusText, url: url.toString(), body };
+        throw err;
+      }
       return res.json();
     }
 
-    async function geocodePDOK(addressString) {
+    function extractLatLonFromObject(obj) {
+      // Doorzoek willekeurige geneste objectstructuren naar lat/lon velden
+      let lat = null, lon = null;
+      function visit(o) {
+        if (!o || typeof o !== 'object') return;
+        for (const [k, v] of Object.entries(o)) {
+          const key = k.toLowerCase();
+          if (typeof v === 'number') {
+            if ((key === 'lat' || key === 'latitude' || key === 'breedte' || key === 'breedtegraad') && lat === null) lat = v;
+            if ((key === 'lon' || key === 'lng' || key === 'long' || key === 'longitude' || key === 'lengte' || key === 'lengtegraad') && lon === null) lon = v;
+          } else if (typeof v === 'string') {
+            // soms komen getallen als string mee
+            const num = Number(v);
+            if (!Number.isNaN(num)) {
+              if ((key === 'lat' || key === 'latitude') && lat === null) lat = num;
+              if ((key === 'lon' || key === 'lng' || key === 'long' || key === 'longitude') && lon === null) lon = num;
+            }
+          } else if (typeof v === 'object') {
+            visit(v);
+          }
+        }
+      }
+      visit(obj);
+      return (lat != null && lon != null) ? { lat, lon } : null;
+    }
+
+    function findLatLonInBasisprofiel(bp) {
+      // Probeer verschillende plekken waar geoData kan zitten
+      const candidates = [];
+      if (bp.geoData) candidates.push(bp.geoData);
+      if (bp.hoofdvestiging) {
+        if (bp.hoofdvestiging.geoData) candidates.push(bp.hoofdvestiging.geoData);
+        if (Array.isArray(bp.hoofdvestiging.adressen)) {
+          bp.hoofdvestiging.adressen.forEach(a => { if (a.geoData) candidates.push(a.geoData); });
+        }
+        if (bp.hoofdvestiging.bezoekadres?.geoData) candidates.push(bp.hoofdvestiging.bezoekadres.geoData);
+      }
+      if (bp.eigenaar) {
+        if (Array.isArray(bp.eigenaar.adressen)) {
+          bp.eigenaar.adressen.forEach(a => { if (a.geoData) candidates.push(a.geoData); });
+        }
+      }
+      for (const c of candidates) {
+        const ll = extractLatLonFromObject(c);
+        if (ll) return ll;
+      }
+      return null;
+    }
+
+        async function geocodePDOK(addressString) {
       // PDOK Locatieserver free endpoint – returns docs with centroide_ll as "POINT(lon lat)"
       const url = new URL('https://geodata.nationaalgeoregister.nl/locatieserver/v3/free');
       url.searchParams.set('q', addressString);
@@ -128,13 +172,17 @@
     }
 
     function addressFromBasisprofiel(bp) {
-      // Probeer eerst hoofdvestiging->bezoekadres, val desnoods terug op (eigenaar/maatschappelijke zetel) of postadres
-      const hv = bp.hoofdvestiging || {};
-      const bezoek = hv.bezoekadres || hv.adres || {};
-      const post = hv.postadres || {};
+      // Zoek adres in embedded eigenaar/hoofdvestiging
+      const eig = bp._embedded?.eigenaar;
+      const hv = bp.hoofdvestiging;
+      const cand = [];
+      if (eig?.adressen && Array.isArray(eig.adressen)) cand.push(...eig.adressen);
+      if (hv?.bezoekadres) cand.push(hv.bezoekadres);
+      if (hv?.postadres) cand.push(hv.postadres);
 
       function fmt(a) {
         if (!a) return null;
+        if (a.volledigAdres) return a.volledigAdres.trim();
         const parts = [];
         if (a.straatnaam) parts.push(a.straatnaam);
         if (a.huisnummer) parts.push(String(a.huisnummer) + (a.huisletter || ''));
@@ -144,15 +192,22 @@
         return [street, city].filter(Boolean).join(', ');
       }
 
+      for (const a of cand) {
+        const s = fmt(a);
+        if (s) return s;
+      }
+      return null;
+    }
+
       return fmt(bezoek) || fmt(post) || null;
     }
 
     // UI refs
     const apiBaseEl = document.getElementById('apiBase');
     const apiKeyEl = document.getElementById('apiKey');
-    const searchFieldEl = document.getElementById('searchField');
-    const searchValueEl = document.getElementById('searchValue');
-    const btnSearch = document.getElementById('btnSearch');
+    const useGeoDataEl = document.getElementById('useGeoData');
+    const kvkInputEl = document.getElementById('kvkInput');
+    const btnGet = document.getElementById('btnGet');
     const resultsEl = document.getElementById('results');
     const statusEl = document.getElementById('status');
     const summaryEl = document.getElementById('summary');
@@ -166,58 +221,85 @@
       resultsEl.prepend(div);
     }
 
-    function renderResults(data, { base, apikey }) {
+    function renderBasisprofiel(bp, { base, apikey, usedGeo }) {
       resultsEl.innerHTML = '';
-      summaryEl.textContent = `Pagina ${data.pagina} • ${data.resultaten?.length || 0} / totaal ${data.totaal}`;
+      const card = document.createElement('div');
+      card.className = 'result stack';
 
-      (data.resultaten || []).forEach((r, idx) => {
-        const card = document.createElement('div');
-        card.className = 'result stack';
+      const title = document.createElement('h3');
+      title.textContent = `${bp.naam || bp.statutaireNaam || '(naam onbekend)'} — ${bp.kvkNummer || ''}`;
+      card.appendChild(title);
 
-        const title = document.createElement('h3');
-        title.textContent = `${r.naam || '(naam onbekend)'} — ${r.kvkNummer || ''}`;
-        card.appendChild(title);
+      // SBI codes
+      const sbiWrap = document.createElement('div');
+      const sbi = Array.isArray(bp.sbiActiviteiten) ? bp.sbiActiviteiten : [];
+      if (sbi.length) {
+        sbiWrap.innerHTML = sbi.map(x => {
+          const hoofd = (x.indHoofdactiviteit || '').toLowerCase() === 'ja' ? ' (hoofd)' : '';
+          return `<span class="badge">SBI ${x.sbiCode}${hoofd}</span> <span class="muted">${x.sbiOmschrijving || ''}</span>`;
+        }).join('<br/>');
+      } else {
+        sbiWrap.innerHTML = '<span class="muted">Geen SBI-activiteiten gevonden</span>';
+      }
+      card.appendChild(sbiWrap);
 
-        const meta = document.createElement('div');
-        meta.className = 'muted';
-        meta.textContent = `${r.type || ''}`;
-        card.appendChild(meta);
+      const meta = document.createElement('div');
+      meta.className = 'muted';
+      const rechtsvorm = bp._embedded?.eigenaar?.uitgebreideRechtsvorm || bp._embedded?.eigenaar?.rechtsvorm || '';
+      meta.textContent = `${rechtsvorm}`;
+      card.appendChild(meta);
 
-        const row = document.createElement('div');
-        row.className = 'row';
+      const addr = addressFromBasisprofiel(bp);
+      if (addr) {
+        const addrDiv = document.createElement('div');
+        addrDiv.className = 'muted';
+        addrDiv.innerHTML = `<span class="badge">adres:</span> ${addr}`;
+        card.appendChild(addrDiv);
+      }
 
-        const btnPlot = document.createElement('button');
-        btnPlot.textContent = 'Plot op kaart';
-        btnPlot.addEventListener('click', async () => {
-          try {
-            btnPlot.disabled = true; btnPlot.textContent = 'Bezig…';
-            // 1) Basisprofiel ophalen
-            const bp = await kvkBasisprofiel({ base, apikey, kvkNummer: r.kvkNummer, geoData: false });
-            // 2) Adresstring bepalen
-            const addr = addressFromBasisprofiel(bp);
-            if (!addr) throw new Error('Geen adres gevonden in basisprofiel.');
-            // 3) Geocoden via PDOK
-            const { lon, lat } = await geocodePDOK(addr);
-            // 4) Marker plaatsen
-            addMarker(lon, lat, r.naam || r.kvkNummer);
-            fitToFeatures();
-            btnPlot.textContent = 'Geplot ✓';
-          } catch (e) {
-            showError(e.message);
-            btnPlot.textContent = 'Plot op kaart';
-          } finally {
-            btnPlot.disabled = false;
+      const row = document.createElement('div');
+      row.className = 'row';
+
+      const btnPlot = document.createElement('button');
+      btnPlot.textContent = 'Plot op kaart';
+      btnPlot.addEventListener('click', async () => {
+        try {
+          btnPlot.disabled = true; btnPlot.textContent = 'Bezig…';
+          let lon, lat;
+          if (usedGeo) {
+            const ll = findLatLonInBasisprofiel(bp);
+            if (ll) { lon = ll.lon; lat = ll.lat; }
           }
-        });
-        row.appendChild(btnPlot);
-
-        const linkBasis = (r.links || []).find(l => (l.rel || '').toLowerCase() === 'basisprofiel');
-        if (linkBasis) {
-          const a = document.createElement('a');
-          a.href = linkBasis.href; a.target = '_blank';
-          a.textContent = 'Basisprofiel (JSON)'; a.rel = 'noreferrer noopener';
-          row.appendChild(a);
+          if (lon == null || lat == null) {
+            const address = addr || addressFromBasisprofiel(bp);
+            if (!address) throw new Error('Geen (geoData of) adres gevonden in basisprofiel.');
+            const g = await geocodePDOK(address);
+            lon = g.lon; lat = g.lat;
+          }
+          addMarker(lon, lat, bp.naam || bp.kvkNummer);
+          fitToFeatures();
+          btnPlot.textContent = 'Geplot ✓';
+        } catch (e) {
+          showError(e.message);
+          btnPlot.textContent = 'Plot op kaart';
+        } finally {
+          btnPlot.disabled = false;
         }
+      });
+      row.appendChild(btnPlot);
+
+      const selfLink = (bp.links || []).find(l => (l.rel || '').toLowerCase() === 'self');
+      if (selfLink) {
+        const a = document.createElement('a');
+        a.href = selfLink.href; a.target = '_blank'; a.rel = 'noreferrer noopener';
+        a.textContent = 'Basisprofiel (JSON)';
+        row.appendChild(a);
+      }
+
+      card.appendChild(row);
+      resultsEl.appendChild(card);
+      summaryEl.textContent = `Basisprofiel geladen (${bp.kvkNummer})`;
+    }
 
         card.appendChild(row);
 
@@ -235,8 +317,33 @@
       });
     }
 
-    btnSearch.addEventListener('click', async () => {
+    btnGet.addEventListener('click', async () => {
       vectorSource.clear();
+      resultsEl.innerHTML = '';
+      const base = apiBaseEl.value;
+      const apikey = apiKeyEl.value.trim();
+      const kvk = kvkInputEl.value.trim();
+      const useGeo = !!useGeoDataEl.checked;
+      if (!kvk) { showError('Vul een KVK-nummer in.'); return; }
+
+      try {
+        showStatus('Basisprofiel ophalen…');
+        const bp = await kvkBasisprofiel({ base, apikey, kvkNummer: kvk, geoData: useGeo });
+        renderBasisprofiel(bp, { base, apikey, usedGeo: useGeo });
+        showStatus('');
+      } catch (e) {
+        const d = e.details;
+        if (d) {
+          showError(`Basisprofiel fout (${d.status} ${d.statusText})
+URL: ${d.url}
+Body: ${d.body?.slice(0,500) || '(leeg)'}
+Tip: controleer API key / test endpoint / KVK-nummer.`);
+        } else {
+          showError(e.message || 'Onbekende fout');
+        }
+        showStatus('');
+      }
+    });
       resultsEl.innerHTML = '';
       const base = apiBaseEl.value;
       const apikey = apiKeyEl.value.trim();
@@ -255,9 +362,5 @@
       }
     });
 
-    // Demo: prefill met voorbeeld uit je bericht
-    searchFieldEl.value = 'kvkNummer';
-    searchValueEl.value = '90002520';
-  </script>
-</body>
-</html>
+    // Demo: prefill met jouw voorbeeld
+    kvkInputEl.value = '69599068';
