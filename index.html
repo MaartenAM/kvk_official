@@ -232,8 +232,7 @@
         if (a.volledigAdres) return a.volledigAdres.trim();
         const parts = [];
         if (a.straatnaam) parts.push(a.straatnaam);
-        if (a.huisnummer) parts.push(String(a.huisnummer) + (a.huisletter || ''));
-        if (a.huisnummertoevoeging) parts.push(a.huisnummertoevoeging);
+        if (a.huisnummer) parts.push(String(a.huisnummer) + (a.huisletter of ''? a.huisletter: '')); /* keep simple */
         const street = parts.join(' ');
         const city = [a.postcode, a.plaats].filter(Boolean).join(' ');
         return [street, city].filter(Boolean).join(', ');
@@ -246,7 +245,7 @@
       return null;
     }
 
-    // Plot helper die je overal kunt hergebruiken
+    // Plot helper
     async function plotFromBasisprofiel(bp, { usedGeo }) {
       let lon, lat;
       if (usedGeo) {
@@ -282,7 +281,7 @@
       resultsEl.prepend(div);
     }
 
-    // Rendering basisprofiel-kaartje (zonder plotknop; we plotten automatisch)
+    // Rendering basisprofiel-kaartje
     function renderBasisprofielCard(bp, { plotted=false, error=null }) {
       const card = document.createElement('div');
       card.className = 'result stack';
@@ -292,13 +291,11 @@
       card.appendChild(title);
 
       const line = document.createElement('div');
-      if (plotted) {
-        line.innerHTML = `<span class="chip ok">Geplot ✓</span>`;
-      } else if (error) {
-        line.innerHTML = `<span class="chip warn" title="${String(error)}">Niet geplot ⚠</span>`;
-      } else {
-        line.innerHTML = `<span class="chip info">Laden…</span>`;
-      }
+      line.innerHTML = plotted
+        ? `<span class="chip ok">Geplot ✓</span>`
+        : error
+          ? `<span class="chip warn" title="${String(error)}">Niet geplot ⚠</span>`
+          : `<span class="chip info">Laden…</span>`;
       card.appendChild(line);
 
       const addr = addressFromBasisprofiel(bp);
@@ -311,6 +308,15 @@
 
       resultsEl.appendChild(card);
       return card;
+    }
+
+    // Hulpfunctie om chip veilig te updaten (zonder optional chaining op LHS)
+    function updateChip(container, { text, add = [], remove = [] }) {
+      const chip = container.querySelector('.chip');
+      if (!chip) return;
+      remove.forEach(c => chip.classList.remove(c));
+      add.forEach(c => chip.classList.add(c));
+      if (typeof text === 'string') chip.textContent = text;
     }
 
     // Render een lijst van zoekresultaten + auto-load & auto-plot
@@ -333,21 +339,17 @@
         return;
       }
 
-      // Parallel ophalen, maar nette status per item
       const promises = items.map(async (item) => {
         try {
           const bp = await kvkBasisprofiel({ base, apikey, kvkNummer: item.kvkNummer, geoData: usedGeo });
           const card = renderBasisprofielCard(bp, { plotted:false });
           await plotFromBasisprofiel(bp, { usedGeo });
-          // update card status
-          card.querySelector('.chip')?.classList.add('ok');
-          card.querySelector('.chip')?.classList.remove('info');
-          card.querySelector('.chip')?.textContent = 'Geplot ✓';
+          updateChip(card, { text: 'Geplot ✓', add: ['ok'], remove: ['info','warn'] });
           return { ok: true, bp };
         } catch (err) {
-          // toon fallback kaartje met fout
           const bpLite = { kvkNummer: item.kvkNummer, naam: item.naam };
-          renderBasisprofielCard(bpLite, { plotted:false, error: err.message || err });
+          const card = renderBasisprofielCard(bpLite, { plotted:false, error: err.message || err });
+          updateChip(card, { text: 'Niet geplot ⚠', add: ['warn'], remove: ['info','ok'] });
           return { ok: false, error: err };
         }
       });
@@ -373,16 +375,14 @@
         if (/^\d{8}$/.test(query)) {
           // KVK-nummer → direct basisprofiel + plot
           const bp = await kvkBasisprofiel({ base, apikey, kvkNummer: query, geoData: usedGeo });
-          resultsEl.innerHTML = ''; // schoon
-          renderBasisprofielCard(bp, { plotted:false });
+          resultsEl.innerHTML = '';
+          const card = renderBasisprofielCard(bp, { plotted:false });
           await plotFromBasisprofiel(bp, { usedGeo });
-          resultsEl.querySelector('.chip')?.classList.add('ok');
-          resultsEl.querySelector('.chip')?.classList.remove('info');
-          resultsEl.querySelector('.chip')?.textContent = 'Geplot ✓';
+          updateChip(card, { text: 'Geplot ✓', add: ['ok'], remove: ['info','warn'] });
           fitToFeatures();
           summaryEl.textContent = `Basisprofiel geladen (${bp.kvkNummer})`;
         } else {
-          // Naam → zoeken, alle basisprofielen ophalen en automatisch plotten
+          // Naam → zoeken, alles automatisch ophalen en plotten
           const zoek = await kvkZoekOpNaam({ base, apikey, naam: query, pagina: 1, resultatenPerPagina: 10 });
           await renderZoekResultatenAuto(zoek, { base, apikey, usedGeo });
           summaryEl.textContent = `Zoekopdracht uitgevoerd: “${query}” (alles geplot)`;
