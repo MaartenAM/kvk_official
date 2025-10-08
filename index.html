@@ -39,9 +39,6 @@
       <label style="min-width:280px;">API key
         <input id="apiKey" value="l7xx1f2691f2520d487b902f4e0b57a0b197" />
       </label>
-      <label style="min-width:340px;">Proxy (optioneel)
-        <input id="proxyBase" placeholder="https://jouw-proxy.example.com/proxy" />
-      </label>
       <label class="row" title="Gebruik KVK geoData voor coordinaten (zo beschikbaar)">
         <input type="checkbox" id="useGeoData" /> geoData gebruiken
       </label>
@@ -55,7 +52,7 @@
   <main>
     <aside id="sidebar">
       <div class="section">
-        <div id="summary" class="muted">Geef een KVK-nummer en klik “Haal basisprofiel op”. Klik daarna “Plot op kaart”.</div>
+        <div id="summary" class="muted">Geef een KVK-nummer en klik "Haal basisprofiel op". Klik daarna "Plot op kaart".</div>
         <div id="results"></div>
       </div>
     </aside>
@@ -97,39 +94,31 @@
     // --- Helpers ---
     
     async function kvkBasisprofiel({ base, apikey, kvkNummer, geoData=false }) {
-      const raw = new URL(`${base}/api/v1/basisprofielen/${encodeURIComponent(kvkNummer)}`);
-      raw.searchParams.set('geoData', String(geoData));
-      let fetchUrl = raw.toString();
-      const proxy = (proxyBaseEl?.value || '').trim();
-      if (proxy) {
-        // Ondersteun 2 stijlen: ?target=... of path passthrough
-        if (proxy.includes('?')) {
-          const u = new URL(proxy);
-          u.searchParams.set('target', fetchUrl);
-          fetchUrl = u.toString();
-        } else {
-          fetchUrl = `${proxy.replace(/\/$/, '')}/${encodeURIComponent(fetchUrl)}`;
-        }
+      const url = new URL(`${base}/api/v1/basisprofielen/${encodeURIComponent(kvkNummer)}`);
+      url.searchParams.set('geoData', String(geoData));
+      
+      // CORS proxy toevoegen - gebruik get mode om headers door te geven
+      const targetUrl = url.toString();
+      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
+      
+      const res = await fetch(proxyUrl);
+      
+      if (!res.ok) {
+        let body = '';
+        try { body = await res.text(); } catch {}
+        const err = new Error(`Basisprofiel request faalde`);
+        err.details = { status: res.status, statusText: res.statusText, url: targetUrl, body };
+        throw err;
       }
-      try {
-        const res = await fetch(fetchUrl, { headers: { 'apikey': apikey } });
-        if (!res.ok) {
-          let body = '';
-          try { body = await res.text(); } catch {}
-          const err = new Error(`Basisprofiel request faalde`);
-          err.details = { status: res.status, statusText: res.statusText, url: fetchUrl, body, note: proxy ? 'Via proxy' : 'Direct' };
-          throw err;
-        }
-        return res.json();
-      } catch (e) {
-        // Waarschijnlijke CORS in browser-context
-        if (e instanceof TypeError && !proxy) {
-          const err = new Error('Netwerk/CORS-fout: voeg een proxy toe of gebruik api.kvk.nl/test');
-          err.details = { original: String(e), url: fetchUrl };
-          throw err;
-        }
-        throw e;
+      
+      const proxyResponse = await res.json();
+      
+      // AllOrigins geeft de data terug in een contents veld
+      if (proxyResponse.contents) {
+        return JSON.parse(proxyResponse.contents);
       }
+      
+      throw new Error('Onverwachte response van proxy');
     }
 
     function extractLatLonFromObject(obj) {
@@ -181,21 +170,17 @@
       return null;
     }
 
-        async function geocodePDOK(addressString) {
-      // PDOK Locatieserver v3_1 free endpoint (officieel):
-      // https://api.pdok.nl/bzk/locatieserver/search/v3_1/free
-      const url = new URL('https://api.pdok.nl/bzk/locatieserver/search/v3_1/free');
+    async function geocodePDOK(addressString) {
+      // PDOK Locatieserver free endpoint – returns docs with centroide_ll as "POINT(lon lat)"
+      const url = new URL('https://geodata.nationaalgeoregister.nl/locatieserver/v3/free');
       url.searchParams.set('q', addressString);
       url.searchParams.set('fq', 'type:adres');
-      url.searchParams.set('rows', '1');
-      url.searchParams.set('fl', 'weergavenaam,centroide_ll');
-
       const res = await fetch(url.toString());
       if (!res.ok) throw new Error(`Geocoding faalde: ${res.status} ${res.statusText}`);
       const data = await res.json();
       const doc = data.response && data.response.docs && data.response.docs[0];
       if (!doc || !doc.centroide_ll) throw new Error('Geen coordinaten gevonden voor: ' + addressString);
-      const match = String(doc.centroide_ll).match(/POINT\(([-0-9.]+) ([0-9.]+)\)/);
+      const match = doc.centroide_ll.match(/POINT\(([-0-9.]+) ([0-9.]+)\)/);
       if (!match) throw new Error('Kon POINT niet parsen');
       return { lon: parseFloat(match[1]), lat: parseFloat(match[2]), doc };
     }
@@ -231,7 +216,6 @@
     // UI refs
     const apiBaseEl = document.getElementById('apiBase');
     const apiKeyEl = document.getElementById('apiKey');
-    const proxyBaseEl = document.getElementById('proxyBase');
     const useGeoDataEl = document.getElementById('useGeoData');
     const kvkInputEl = document.getElementById('kvkInput');
     const btnGet = document.getElementById('btnGet');
