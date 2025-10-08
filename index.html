@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>KVK Zoeken + OpenLayers Plot (Test)</title>
+  <title>KVK Zoeken + Auto-plot (Test)</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@latest/ol.css" />
   <style>
     body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
@@ -13,7 +13,7 @@
     label { font-size: 12px; color:#555; }
     input, select, button { padding:8px 10px; border:1px solid #ccc; border-radius:8px; font-size:14px; }
     button { cursor:pointer; }
-    main { display:grid; grid-template-columns: 380px 1fr; gap:0; height: calc(100vh - 58px); }
+    main { display:grid; grid-template-columns: 420px 1fr; gap:0; height: calc(100vh - 58px); }
     #sidebar { border-right:1px solid #eee; overflow:auto; }
     #map { width:100%; height:100%; }
     .section { padding: 12px 14px; }
@@ -24,11 +24,15 @@
     .stack { display:flex; flex-direction:column; gap:6px; }
     .error { color:#b00020; background:#fff2f2; border:1px solid #ffd7d7; padding:8px 10px; border-radius:8px; white-space:pre-wrap; }
     .badge { display:inline-block; background:#f3f4f6; border:1px solid #e5e7eb; padding:2px 8px; border-radius:999px; font-size:12px; }
+    .chip  { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; border:1px solid #e5e7eb; background:#f9fafb; }
+    .ok { color:#065f46; border-color:#d1fae5; background:#ecfdf5; }
+    .warn { color:#7c2d12; border-color:#fed7aa; background:#fffbeb; }
+    .info { color:#1e40af; border-color:#bfdbfe; background:#eff6ff; }
   </style>
 </head>
 <body>
   <header>
-    <h1>KVK Basisprofiel ↔ Naamzoek → Plot op kaart</h1>
+    <h1>KVK Basisprofiel ↔ Naamzoek → Auto-plot</h1>
     <div class="controls">
       <label>API-base
         <select id="apiBase">
@@ -53,7 +57,7 @@
   <main>
     <aside id="sidebar">
       <div class="section">
-        <div id="summary" class="muted">Vul een KVK-nummer (8 cijfers) of (deel van) een naam in en klik “Zoek / haal op”. Klik daarna “Plot op kaart”.</div>
+        <div id="summary" class="muted">Vul een KVK-nummer (8 cijfers) of (deel van) een naam in en klik “Zoek / haal op”. Bij naam: basisprofielen worden automatisch opgehaald en geplot.</div>
         <div id="results"></div>
       </div>
     </aside>
@@ -103,7 +107,7 @@
       }
     }
 
-    // --- Generic: robuuste fetch met fallback proxies en retries ---
+    // --- Robuuste fetch met fallback proxies + retries ---
     async function fetchJSONWithProxy(targetUrl, { retries = 2, timeoutMs = 12000 } = {}) {
       const candidates = [
         { kind: 'direct', build: (u) => ({ url: u, isAllOrigins: false }) },
@@ -124,10 +128,10 @@
             const data = cfg.isAllOrigins ? JSON.parse((await res.json()).contents) : await res.json();
             return data;
           } catch (e) {
-            lastErr = e; // probeer volgende proxy
+            lastErr = e; // volgende proxy proberen
           }
         }
-        await new Promise(r => setTimeout(r, 300 + attempt * 300)); // backoff en opnieuw
+        await new Promise(r => setTimeout(r, 300 + attempt * 300)); // backoff
       }
       throw lastErr || new Error('Proxy chain failed');
     }
@@ -136,7 +140,6 @@
     async function kvkBasisprofiel({ base, apikey, kvkNummer, geoData=false }) {
       const url = new URL(`${base}/api/v1/basisprofielen/${encodeURIComponent(kvkNummer)}`);
       url.searchParams.set('geoData', String(geoData));
-      // NB: In productie hoort de apikey als header via een eigen server/proxy.
       return await fetchJSONWithProxy(url.toString(), { retries: 2, timeoutMs: 12000 });
     }
 
@@ -243,6 +246,23 @@
       return null;
     }
 
+    // Plot helper die je overal kunt hergebruiken
+    async function plotFromBasisprofiel(bp, { usedGeo }) {
+      let lon, lat;
+      if (usedGeo) {
+        const ll = findLatLonInBasisprofiel(bp);
+        if (ll) { lon = ll.lon; lat = ll.lat; }
+      }
+      if (lon == null || lat == null) {
+        const addr = addressFromBasisprofiel(bp);
+        if (!addr) throw new Error('Geen (geoData of) adres gevonden in basisprofiel.');
+        const g = await geocodePDOK(addr);
+        lon = g.lon; lat = g.lat;
+      }
+      addMarker(lon, lat, bp.naam || bp.kvkNummer);
+      return { lon, lat };
+    }
+
     // --- UI refs ---
     const apiBaseEl = document.getElementById('apiBase');
     const apiKeyEl = document.getElementById('apiKey');
@@ -262,9 +282,8 @@
       resultsEl.prepend(div);
     }
 
-    // --- Rendering ---
-    function renderBasisprofiel(bp, { base, apikey, usedGeo }) {
-      resultsEl.innerHTML = '';
+    // Rendering basisprofiel-kaartje (zonder plotknop; we plotten automatisch)
+    function renderBasisprofielCard(bp, { plotted=false, error=null }) {
       const card = document.createElement('div');
       card.className = 'result stack';
 
@@ -272,23 +291,15 @@
       title.textContent = `${bp.naam || bp.statutaireNaam || '(naam onbekend)'} — ${bp.kvkNummer || ''}`;
       card.appendChild(title);
 
-      const sbiWrap = document.createElement('div');
-      const sbi = Array.isArray(bp.sbiActiviteiten) ? bp.sbiActiviteiten : [];
-      if (sbi.length) {
-        sbiWrap.innerHTML = sbi.map(x => {
-          const hoofd = (x.indHoofdactiviteit || '').toLowerCase() === 'ja' ? ' (hoofd)' : '';
-          return `<span class="badge">SBI ${x.sbiCode}${hoofd}</span> <span class="muted">${x.sbiOmschrijving || ''}</span>`;
-        }).join('<br/>');
+      const line = document.createElement('div');
+      if (plotted) {
+        line.innerHTML = `<span class="chip ok">Geplot ✓</span>`;
+      } else if (error) {
+        line.innerHTML = `<span class="chip warn" title="${String(error)}">Niet geplot ⚠</span>`;
       } else {
-        sbiWrap.innerHTML = '<span class="muted">Geen SBI-activiteiten gevonden</span>';
+        line.innerHTML = `<span class="chip info">Laden…</span>`;
       }
-      card.appendChild(sbiWrap);
-
-      const meta = document.createElement('div');
-      meta.className = 'muted';
-      const rechtsvorm = bp._embedded?.eigenaar?.uitgebreideRechtsvorm || bp._embedded?.eigenaar?.rechtsvorm || '';
-      meta.textContent = `${rechtsvorm}`;
-      card.appendChild(meta);
+      card.appendChild(line);
 
       const addr = addressFromBasisprofiel(bp);
       if (addr) {
@@ -298,128 +309,52 @@
         card.appendChild(addrDiv);
       }
 
-      const row = document.createElement('div');
-      row.className = 'row';
-
-      const btnPlot = document.createElement('button');
-      btnPlot.textContent = 'Plot op kaart';
-      btnPlot.addEventListener('click', async () => {
-        try {
-          btnPlot.disabled = true; btnPlot.textContent = 'Bezig…';
-          let lon, lat;
-          if (usedGeo) {
-            const ll = findLatLonInBasisprofiel(bp);
-            if (ll) { lon = ll.lon; lat = ll.lat; }
-          }
-          if (lon == null || lat == null) {
-            const address = addr || addressFromBasisprofiel(bp);
-            if (!address) throw new Error('Geen (geoData of) adres gevonden in basisprofiel.');
-            const g = await geocodePDOK(address);
-            lon = g.lon; lat = g.lat;
-          }
-          addMarker(lon, lat, bp.naam || bp.kvkNummer);
-          fitToFeatures();
-          btnPlot.textContent = 'Geplot ✓';
-        } catch (e) {
-          showError(e.message);
-          btnPlot.textContent = 'Plot op kaart';
-        } finally {
-          btnPlot.disabled = false;
-        }
-      });
-      row.appendChild(btnPlot);
-
-      const selfLink = (bp.links || []).find(l => (l.rel || '').toLowerCase() === 'self');
-      if (selfLink) {
-        const a = document.createElement('a');
-        a.href = selfLink.href; a.target = '_blank'; a.rel = 'noreferrer noopener';
-        a.textContent = 'Basisprofiel (JSON)';
-        row.appendChild(a);
-      }
-
-      card.appendChild(row);
       resultsEl.appendChild(card);
-      summaryEl.textContent = `Basisprofiel geladen (${bp.kvkNummer})`;
+      return card;
     }
 
-    function renderZoekResultaten(zoek, { base, apikey }) {
+    // Render een lijst van zoekresultaten + auto-load & auto-plot
+    async function renderZoekResultatenAuto(zoek, { base, apikey, usedGeo }) {
       resultsEl.innerHTML = '';
       const wrap = document.createElement('div');
       wrap.className = 'section';
-
       const hdr = document.createElement('div');
       hdr.className = 'muted';
-      hdr.textContent = `Zoekresultaten: ${zoek.totaal} gevonden`;
+      hdr.textContent = `Zoekresultaten: ${zoek.totaal} gevonden — basisprofielen laden & plotten…`;
       wrap.appendChild(hdr);
+      resultsEl.appendChild(wrap);
 
-      if (!Array.isArray(zoek.resultaten) || zoek.resultaten.length === 0) {
+      const items = Array.isArray(zoek.resultaten) ? zoek.resultaten : [];
+      if (!items.length) {
         const empty = document.createElement('div');
         empty.className = 'muted';
         empty.textContent = 'Geen resultaten.';
         wrap.appendChild(empty);
-      } else {
-        zoek.resultaten.forEach(item => {
-          const card = document.createElement('div');
-          card.className = 'result stack';
-
-          const title = document.createElement('h3');
-          title.textContent = `${item.naam || '(naam onbekend)'} — ${item.kvkNummer || ''}`;
-          card.appendChild(title);
-
-          const ad = item.adres?.binnenlandsAdres;
-          if (ad) {
-            const addrLine = [ad.straatnaam, ad.huisnummer, ad.huisletter, ad.postcode, ad.plaats]
-              .filter(Boolean).join(' ').replace(/\s+/g,' ');
-            const addrDiv = document.createElement('div');
-            addrDiv.className = 'muted';
-            addrDiv.innerHTML = `<span class="badge">adres:</span> ${addrLine}`;
-            card.appendChild(addrDiv);
-          }
-
-          const row = document.createElement('div');
-          row.className = 'row';
-
-          const btn = document.createElement('button');
-          btn.textContent = 'Laad basisprofiel';
-          btn.addEventListener('click', async () => {
-            try {
-              btn.disabled = true; btn.textContent = 'Bezig…';
-              const bp = await kvkBasisprofiel({
-                base,
-                apikey,
-                kvkNummer: item.kvkNummer,
-                geoData: !!useGeoDataEl.checked
-              });
-              renderBasisprofiel(bp, { base, apikey, usedGeo: !!useGeoDataEl.checked });
-            } catch (e) {
-              const d = e.details;
-              if (d) {
-                showError(`Basisprofiel fout (${d.status} ${d.statusText})
-URL: ${d.url}
-Body: ${d.body?.slice(0,500) || '(leeg)'}`);
-              } else {
-                showError(e.message || 'Onbekende fout');
-              }
-            } finally {
-              btn.disabled = false; btn.textContent = 'Laad basisprofiel';
-            }
-          });
-          row.appendChild(btn);
-
-          const basisLink = (item.links || []).find(l => (l.rel || '').toLowerCase() === 'basisprofiel');
-          if (basisLink) {
-            const a = document.createElement('a');
-            a.href = basisLink.href; a.target = '_blank'; a.rel = 'noreferrer noopener';
-            a.textContent = 'Basisprofiel (JSON)';
-            row.appendChild(a);
-          }
-
-          card.appendChild(row);
-          wrap.appendChild(card);
-        });
+        return;
       }
 
-      resultsEl.appendChild(wrap);
+      // Parallel ophalen, maar nette status per item
+      const promises = items.map(async (item) => {
+        try {
+          const bp = await kvkBasisprofiel({ base, apikey, kvkNummer: item.kvkNummer, geoData: usedGeo });
+          const card = renderBasisprofielCard(bp, { plotted:false });
+          await plotFromBasisprofiel(bp, { usedGeo });
+          // update card status
+          card.querySelector('.chip')?.classList.add('ok');
+          card.querySelector('.chip')?.classList.remove('info');
+          card.querySelector('.chip')?.textContent = 'Geplot ✓';
+          return { ok: true, bp };
+        } catch (err) {
+          // toon fallback kaartje met fout
+          const bpLite = { kvkNummer: item.kvkNummer, naam: item.naam };
+          renderBasisprofielCard(bpLite, { plotted:false, error: err.message || err });
+          return { ok: false, error: err };
+        }
+      });
+
+      await Promise.allSettled(promises);
+      hdr.textContent = `Zoekresultaten: ${zoek.totaal} gevonden — klaar.`;
+      fitToFeatures();
     }
 
     // --- Event: zoeken / ophalen ---
@@ -429,22 +364,28 @@ Body: ${d.body?.slice(0,500) || '(leeg)'}`);
       const base = apiBaseEl.value;
       const apikey = apiKeyEl.value.trim();
       const query = kvkInputEl.value.trim();
-      const useGeo = !!useGeoDataEl.checked;
+      const usedGeo = !!useGeoDataEl.checked;
       if (!query) { showError('Vul een KVK-nummer of (deel van) een naam in.'); return; }
 
       try {
         showStatus('Bezig…');
 
         if (/^\d{8}$/.test(query)) {
-          // KVK-nummer → direct basisprofiel
-          const bp = await kvkBasisprofiel({ base, apikey, kvkNummer: query, geoData: useGeo });
-          renderBasisprofiel(bp, { base, apikey, usedGeo: useGeo });
+          // KVK-nummer → direct basisprofiel + plot
+          const bp = await kvkBasisprofiel({ base, apikey, kvkNummer: query, geoData: usedGeo });
+          resultsEl.innerHTML = ''; // schoon
+          renderBasisprofielCard(bp, { plotted:false });
+          await plotFromBasisprofiel(bp, { usedGeo });
+          resultsEl.querySelector('.chip')?.classList.add('ok');
+          resultsEl.querySelector('.chip')?.classList.remove('info');
+          resultsEl.querySelector('.chip')?.textContent = 'Geplot ✓';
+          fitToFeatures();
           summaryEl.textContent = `Basisprofiel geladen (${bp.kvkNummer})`;
         } else {
-          // Naam → zoeken en lijst tonen
+          // Naam → zoeken, alle basisprofielen ophalen en automatisch plotten
           const zoek = await kvkZoekOpNaam({ base, apikey, naam: query, pagina: 1, resultatenPerPagina: 10 });
-          renderZoekResultaten(zoek, { base, apikey });
-          summaryEl.textContent = `Zoekopdracht uitgevoerd: “${query}”`;
+          await renderZoekResultatenAuto(zoek, { base, apikey, usedGeo });
+          summaryEl.textContent = `Zoekopdracht uitgevoerd: “${query}” (alles geplot)`;
         }
 
         showStatus('');
