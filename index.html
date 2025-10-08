@@ -232,7 +232,8 @@
         if (a.volledigAdres) return a.volledigAdres.trim();
         const parts = [];
         if (a.straatnaam) parts.push(a.straatnaam);
-        if (a.huisnummer) parts.push(String(a.huisnummer) + (a.huisletter of ''? a.huisletter: '')); /* keep simple */
+        if (a.huisnummer) parts.push(String(a.huisnummer) + (a.huisletter || ''));   <!-- FIX: '||' i.p.v. 'of' -->
+        if (a.huisnummertoevoeging) parts.push(a.huisnummertoevoeging);
         const street = parts.join(' ');
         const city = [a.postcode, a.plaats].filter(Boolean).join(' ');
         return [street, city].filter(Boolean).join(', ');
@@ -310,7 +311,6 @@
       return card;
     }
 
-    // Hulpfunctie om chip veilig te updaten (zonder optional chaining op LHS)
     function updateChip(container, { text, add = [], remove = [] }) {
       const chip = container.querySelector('.chip');
       if (!chip) return;
