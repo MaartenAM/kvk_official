@@ -219,6 +219,17 @@
       return null;
     }
 
+function sbiHTML(bp) {
+  const sbi = Array.isArray(bp?.sbiActiviteiten) ? bp.sbiActiviteiten : [];
+  if (!sbi.length) return '<span class="muted">Geen SBI-activiteiten gevonden</span>';
+  return sbi.map(x => {
+    const hoofd = (String(x.indHoofdactiviteit || '').toLowerCase() === 'ja') ? ' (hoofd)' : '';
+    const code = x.sbiCode ? `SBI ${x.sbiCode}${hoofd}` : `SBI${hoofd}`;
+    const oms = x.sbiOmschrijving ? `<span class="muted">${x.sbiOmschrijving}</span>` : '';
+    return `<div><span class="badge">${code}</span> ${oms}</div>`;
+  }).join('');
+}    
+
     function addressFromBasisprofiel(bp) {
       const eig = bp._embedded?.eigenaar;
       const hv = bp.hoofdvestiging;
@@ -282,34 +293,40 @@
       resultsEl.prepend(div);
     }
 
-    // Rendering basisprofiel-kaartje
-    function renderBasisprofielCard(bp, { plotted=false, error=null }) {
-      const card = document.createElement('div');
-      card.className = 'result stack';
+function renderBasisprofielCard(bp, { plotted=false, error=null }) {
+  const card = document.createElement('div');
+  card.className = 'result stack';
 
-      const title = document.createElement('h3');
-      title.textContent = `${bp.naam || bp.statutaireNaam || '(naam onbekend)'} — ${bp.kvkNummer || ''}`;
-      card.appendChild(title);
+  const title = document.createElement('h3');
+  title.textContent = `${bp.naam || bp.statutaireNaam || '(naam onbekend)'} — ${bp.kvkNummer || ''}`;
+  card.appendChild(title);
 
-      const line = document.createElement('div');
-      line.innerHTML = plotted
-        ? `<span class="chip ok">Geplot ✓</span>`
-        : error
-          ? `<span class="chip warn" title="${String(error)}">Niet geplot ⚠</span>`
-          : `<span class="chip info">Laden…</span>`;
-      card.appendChild(line);
+  const line = document.createElement('div');
+  line.innerHTML = plotted
+    ? `<span class="chip ok">Geplot ✓</span>`
+    : error
+      ? `<span class="chip warn" title="${String(error)}">Niet geplot ⚠</span>`
+      : `<span class="chip info">Laden…</span>`;
+  card.appendChild(line);
 
-      const addr = addressFromBasisprofiel(bp);
-      if (addr) {
-        const addrDiv = document.createElement('div');
-        addrDiv.className = 'muted';
-        addrDiv.innerHTML = `<span class="badge">adres:</span> ${addr}`;
-        card.appendChild(addrDiv);
-      }
+  // Adres (indien aanwezig)
+  const addr = addressFromBasisprofiel(bp);
+  if (addr) {
+    const addrDiv = document.createElement('div');
+    addrDiv.className = 'muted';
+    addrDiv.innerHTML = `<span class="badge">adres:</span> ${addr}`;
+    card.appendChild(addrDiv);
+  }
 
-      resultsEl.appendChild(card);
-      return card;
-    }
+  // ✅ SBI-blok
+  const sbiDiv = document.createElement('div');
+  sbiDiv.className = 'stack';
+  sbiDiv.innerHTML = sbiHTML(bp);
+  card.appendChild(sbiDiv);
+
+  resultsEl.appendChild(card);
+  return card;
+}
 
     function updateChip(container, { text, add = [], remove = [] }) {
       const chip = container.querySelector('.chip');
