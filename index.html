@@ -28,7 +28,7 @@
 </head>
 <body>
   <header>
-    <h1>KVK Basisprofiel → Plot op kaart (Test)</h1>
+    <h1>KVK Basisprofiel ↔ Naamzoek → Plot op kaart</h1>
     <div class="controls">
       <label>API-base
         <select id="apiBase">
@@ -42,17 +42,18 @@
       <label class="row" title="Gebruik KVK geoData voor coordinaten (zo beschikbaar)">
         <input type="checkbox" id="useGeoData" /> geoData gebruiken
       </label>
-      <label>KVK-nummer
-        <input id="kvkInput" placeholder="bijv. 69599068" />
+      <label>KVK-nummer of naam
+        <input id="kvkInput" placeholder="bv. 69599068 of 'Global Conron'" />
       </label>
-      <button id="btnGet">Haal basisprofiel op</button>
+      <button id="btnGet">Zoek / haal op</button>
       <span id="status" class="muted"></span>
     </div>
   </header>
+
   <main>
     <aside id="sidebar">
       <div class="section">
-        <div id="summary" class="muted">Geef een KVK-nummer en klik "Haal basisprofiel op". Klik daarna "Plot op kaart".</div>
+        <div id="summary" class="muted">Vul een KVK-nummer (8 cijfers) of (deel van) een naam in en klik “Zoek / haal op”. Klik daarna “Plot op kaart”.</div>
         <div id="results"></div>
       </div>
     </aside>
@@ -64,9 +65,7 @@
     // --- OpenLayers kaart ---
     const map = new ol.Map({
       target: 'map',
-      layers: [
-        new ol.layer.Tile({ source: new ol.source.OSM() })
-      ],
+      layers: [ new ol.layer.Tile({ source: new ol.source.OSM() }) ],
       view: new ol.View({ center: ol.proj.fromLonLat([5.387, 52.156]), zoom: 7 })
     });
 
@@ -75,10 +74,23 @@
     map.addLayer(vectorLayer);
 
     function addMarker(lon, lat, label) {
-      const feature = new ol.Feature({ geometry: new ol.geom.Point(ol.proj.fromLonLat([lon, lat])), name: label });
+      const feature = new ol.Feature({
+        geometry: new ol.geom.Point(ol.proj.fromLonLat([lon, lat])),
+        name: label
+      });
       feature.setStyle(new ol.style.Style({
-        image: new ol.style.Circle({ radius: 6, fill: new ol.style.Fill({ color: '#2563eb' }), stroke: new ol.style.Stroke({ color: '#1e40af', width: 2 }) }),
-        text: new ol.style.Text({ text: label || '', offsetY: -14, font: '12px sans-serif', fill: new ol.style.Fill({ color: '#111' }), stroke: new ol.style.Stroke({ color: '#fff', width: 3 }) })
+        image: new ol.style.Circle({
+          radius: 6,
+          fill: new ol.style.Fill({ color: '#2563eb' }),
+          stroke: new ol.style.Stroke({ color: '#1e40af', width: 2 })
+        }),
+        text: new ol.style.Text({
+          text: label || '',
+          offsetY: -14,
+          font: '12px sans-serif',
+          fill: new ol.style.Fill({ color: '#111' }),
+          stroke: new ol.style.Stroke({ color: '#fff', width: 3 })
+        })
       }));
       vectorSource.addFeature(feature);
       return feature;
@@ -91,38 +103,67 @@
       }
     }
 
-    // --- Helpers ---
-    
+    // --- Helpers: KVK API via CORS-proxy ---
     async function kvkBasisprofiel({ base, apikey, kvkNummer, geoData=false }) {
       const url = new URL(`${base}/api/v1/basisprofielen/${encodeURIComponent(kvkNummer)}`);
       url.searchParams.set('geoData', String(geoData));
-      
-      // CORS proxy toevoegen - gebruik get mode om headers door te geven
       const targetUrl = url.toString();
       const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
-      
       const res = await fetch(proxyUrl);
-      
       if (!res.ok) {
-        let body = '';
-        try { body = await res.text(); } catch {}
+        let body = ''; try { body = await res.text(); } catch {}
         const err = new Error(`Basisprofiel request faalde`);
         err.details = { status: res.status, statusText: res.statusText, url: targetUrl, body };
         throw err;
       }
-      
       const proxyResponse = await res.json();
-      
-      // AllOrigins geeft de data terug in een contents veld
-      if (proxyResponse.contents) {
-        return JSON.parse(proxyResponse.contents);
-      }
-      
+      if (proxyResponse.contents) return JSON.parse(proxyResponse.contents);
       throw new Error('Onverwachte response van proxy');
     }
 
+    async function kvkZoekOpNaam({ base, apikey, naam, pagina = 1, resultatenPerPagina = 10 }) {
+      const url = new URL(`${base}/api/v2/zoeken`);
+      url.searchParams.set('naam', naam);
+      url.searchParams.set('pagina', String(pagina));
+      url.searchParams.set('resultatenPerPagina', String(resultatenPerPagina));
+      const targetUrl = url.toString();
+      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
+      const res = await fetch(proxyUrl);
+      if (!res.ok) {
+        let body = ''; try { body = await res.text(); } catch {}
+        const err = new Error(`Zoekrequest faalde`);
+        err.details = { status: res.status, statusText: res.statusText, url: targetUrl, body };
+        throw err;
+      }
+      const proxyResponse = await res.json();
+      if (proxyResponse.contents) return JSON.parse(proxyResponse.contents);
+      throw new Error('Onverwachte response van proxy (zoeken)');
+    }
+
+    // --- PDOK geocoder (v3.1) ---
+    async function geocodePDOK(addressString) {
+      // PDOK Locatieserver v3.1 free endpoint – docs bevatten 'centroide_ll' als "POINT(lon lat)"
+      const url = new URL('https://api.pdok.nl/bzk/locatieserver/search/v3_1/free');
+      url.searchParams.set('q', addressString);
+      url.searchParams.set('fq', 'type:adres');
+      url.searchParams.set('fl', 'centroide_ll,centroide_rd,weergavenaam,score');
+      url.searchParams.set('rows', '1');
+
+      const res = await fetch(url.toString());
+      if (!res.ok) throw new Error(`Geocoding faalde: ${res.status} ${res.statusText}`);
+
+      const data = await res.json();
+      const doc = data?.response?.docs?.[0];
+      if (!doc || !doc.centroide_ll) throw new Error('Geen coördinaten gevonden voor: ' + addressString);
+
+      const match = doc.centroide_ll.match(/POINT\(([-0-9.]+) ([0-9.]+)\)/);
+      if (!match) throw new Error(`Kon POINT niet parsen uit: ${doc.centroide_ll}`);
+
+      return { lon: parseFloat(match[1]), lat: parseFloat(match[2]), doc };
+    }
+
+    // --- Basisprofiel helpers ---
     function extractLatLonFromObject(obj) {
-      // Doorzoek willekeurige geneste objectstructuren naar lat/lon velden
       let lat = null, lon = null;
       function visit(o) {
         if (!o || typeof o !== 'object') return;
@@ -132,7 +173,6 @@
             if ((key === 'lat' || key === 'latitude' || key === 'breedte' || key === 'breedtegraad') && lat === null) lat = v;
             if ((key === 'lon' || key === 'lng' || key === 'long' || key === 'longitude' || key === 'lengte' || key === 'lengtegraad') && lon === null) lon = v;
           } else if (typeof v === 'string') {
-            // soms komen getallen als string mee
             const num = Number(v);
             if (!Number.isNaN(num)) {
               if ((key === 'lat' || key === 'latitude') && lat === null) lat = num;
@@ -148,7 +188,6 @@
     }
 
     function findLatLonInBasisprofiel(bp) {
-      // Probeer verschillende plekken waar geoData kan zitten
       const candidates = [];
       if (bp.geoData) candidates.push(bp.geoData);
       if (bp.hoofdvestiging) {
@@ -170,31 +209,7 @@
       return null;
     }
 
-async function geocodePDOK(addressString) {
-  // PDOK Locatieserver v3.1 free endpoint – geeft docs terug met 'centroide_ll' als "POINT(lon lat)"
-  const url = new URL('https://api.pdok.nl/bzk/locatieserver/search/v3_1/free');
-  url.searchParams.set('q', addressString);
-  url.searchParams.set('fq', 'type:adres');
-  url.searchParams.set('fl', 'centroide_ll,centroide_rd,weergavenaam,score');
-  url.searchParams.set('rows', '1');
-
-  const res = await fetch(url.toString());
-  if (!res.ok) throw new Error(`Geocoding faalde: ${res.status} ${res.statusText}`);
-
-  const data = await res.json();
-  const doc = data?.response?.docs?.[0];
-  if (!doc || !doc.centroide_ll) throw new Error('Geen coördinaten gevonden voor: ' + addressString);
-
-  // ✅ Fix: juiste regex zonder extra escape-tekens
-  const match = doc.centroide_ll.match(/POINT\(([-0-9.]+) ([0-9.]+)\)/);
-  if (!match) throw new Error(`Kon POINT niet parsen uit: ${doc.centroide_ll}`);
-
-  return { lon: parseFloat(match[1]), lat: parseFloat(match[2]), doc };
-}
-
-
     function addressFromBasisprofiel(bp) {
-      // Zoek adres in embedded eigenaar/hoofdvestiging
       const eig = bp._embedded?.eigenaar;
       const hv = bp.hoofdvestiging;
       const cand = [];
@@ -221,7 +236,7 @@ async function geocodePDOK(addressString) {
       return null;
     }
 
-    // UI refs
+    // --- UI refs ---
     const apiBaseEl = document.getElementById('apiBase');
     const apiKeyEl = document.getElementById('apiKey');
     const useGeoDataEl = document.getElementById('useGeoData');
@@ -240,6 +255,7 @@ async function geocodePDOK(addressString) {
       resultsEl.prepend(div);
     }
 
+    // --- Rendering ---
     function renderBasisprofiel(bp, { base, apikey, usedGeo }) {
       resultsEl.innerHTML = '';
       const card = document.createElement('div');
@@ -249,7 +265,6 @@ async function geocodePDOK(addressString) {
       title.textContent = `${bp.naam || bp.statutaireNaam || '(naam onbekend)'} — ${bp.kvkNummer || ''}`;
       card.appendChild(title);
 
-      // SBI codes
       const sbiWrap = document.createElement('div');
       const sbi = Array.isArray(bp.sbiActiviteiten) ? bp.sbiActiviteiten : [];
       if (sbi.length) {
@@ -320,36 +335,130 @@ async function geocodePDOK(addressString) {
       summaryEl.textContent = `Basisprofiel geladen (${bp.kvkNummer})`;
     }
 
-    // Event: haal basisprofiel op
-    btnGet.addEventListener('click', async () => {
+    function renderZoekResultaten(zoek, { base, apikey }) {
+      resultsEl.innerHTML = '';
+      const wrap = document.createElement('div');
+      wrap.className = 'section';
+
+      const hdr = document.createElement('div');
+      hdr.className = 'muted';
+      hdr.textContent = `Zoekresultaten: ${zoek.totaal} gevonden`;
+      wrap.appendChild(hdr);
+
+      if (!Array.isArray(zoek.resultaten) || zoek.resultaten.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'muted';
+        empty.textContent = 'Geen resultaten.';
+        wrap.appendChild(empty);
+      } else {
+        zoek.resultaten.forEach(item => {
+          const card = document.createElement('div');
+          card.className = 'result stack';
+
+          const title = document.createElement('h3');
+          title.textContent = `${item.naam || '(naam onbekend)'} — ${item.kvkNummer || ''}`;
+          card.appendChild(title);
+
+          const ad = item.adres?.binnenlandsAdres;
+          if (ad) {
+            const addrLine = [ad.straatnaam, ad.huisnummer, ad.huisletter, ad.postcode, ad.plaats]
+              .filter(Boolean).join(' ').replace(/\s+/g,' ');
+            const addrDiv = document.createElement('div');
+            addrDiv.className = 'muted';
+            addrDiv.innerHTML = `<span class="badge">adres:</span> ${addrLine}`;
+            card.appendChild(addrDiv);
+          }
+
+          const row = document.createElement('div');
+          row.className = 'row';
+
+          const btn = document.createElement('button');
+          btn.textContent = 'Laad basisprofiel';
+          btn.addEventListener('click', async () => {
+            try {
+              btn.disabled = true; btn.textContent = 'Bezig…';
+              const bp = await kvkBasisprofiel({
+                base,
+                apikey,
+                kvkNummer: item.kvkNummer,
+                geoData: !!useGeoDataEl.checked
+              });
+              renderBasisprofiel(bp, { base, apikey, usedGeo: !!useGeoDataEl.checked });
+            } catch (e) {
+              const d = e.details;
+              if (d) {
+                showError(`Basisprofiel fout (${d.status} ${d.statusText})
+URL: ${d.url}
+Body: ${d.body?.slice(0,500) || '(leeg)'}`);
+              } else {
+                showError(e.message || 'Onbekende fout');
+              }
+            } finally {
+              btn.disabled = false; btn.textContent = 'Laad basisprofiel';
+            }
+          });
+          row.appendChild(btn);
+
+          const basisLink = (item.links || []).find(l => (l.rel || '').toLowerCase() === 'basisprofiel');
+          if (basisLink) {
+            const a = document.createElement('a');
+            a.href = basisLink.href; a.target = '_blank'; a.rel = 'noreferrer noopener';
+            a.textContent = 'Basisprofiel (JSON)';
+            row.appendChild(a);
+          }
+
+          card.appendChild(row);
+          wrap.appendChild(card);
+        });
+      }
+
+      resultsEl.appendChild(wrap);
+    }
+
+    // --- Event: zoeken / ophalen ---
+    const btnHandler = async () => {
       vectorSource.clear();
       resultsEl.innerHTML = '';
       const base = apiBaseEl.value;
       const apikey = apiKeyEl.value.trim();
-      const kvk = kvkInputEl.value.trim();
+      const query = kvkInputEl.value.trim();
       const useGeo = !!useGeoDataEl.checked;
-      if (!kvk) { showError('Vul een KVK-nummer in.'); return; }
+      if (!query) { showError('Vul een KVK-nummer of (deel van) een naam in.'); return; }
 
       try {
-        showStatus('Basisprofiel ophalen…');
-        const bp = await kvkBasisprofiel({ base, apikey, kvkNummer: kvk, geoData: useGeo });
-        renderBasisprofiel(bp, { base, apikey, usedGeo: useGeo });
+        showStatus('Bezig…');
+
+        if (/^\d{8}$/.test(query)) {
+          // KVK-nummer → direct basisprofiel
+          const bp = await kvkBasisprofiel({ base, apikey, kvkNummer: query, geoData: useGeo });
+          renderBasisprofiel(bp, { base, apikey, usedGeo: useGeo });
+          summaryEl.textContent = `Basisprofiel geladen (${bp.kvkNummer})`;
+        } else {
+          // Naam → zoeken en lijst tonen
+          const zoek = await kvkZoekOpNaam({ base, apikey, naam: query, pagina: 1, resultatenPerPagina: 10 });
+          renderZoekResultaten(zoek, { base, apikey });
+          summaryEl.textContent = `Zoekopdracht uitgevoerd: “${query}”`;
+        }
+
         showStatus('');
       } catch (e) {
         const d = e.details;
         if (d) {
-          showError(`Basisprofiel fout (${d.status} ${d.statusText})
+          showError(`Fout (${d.status} ${d.statusText})
 URL: ${d.url}
 Body: ${d.body?.slice(0,500) || '(leeg)'}
-Tip: controleer API key / test endpoint / KVK-nummer.`);
+Tip: controleer API key / test endpoint / invoer.`);
         } else {
           showError(e.message || 'Onbekende fout');
         }
         showStatus('');
       }
-    });
+    };
 
-    // Demo: prefill met jouw voorbeeld
+    btnGet.addEventListener('click', btnHandler);
+    kvkInputEl.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') btnHandler(); });
+
+    // Demo: prefill
     kvkInputEl.value = '69599068';
   </script>
 </body>
