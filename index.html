@@ -97,22 +97,28 @@
       const url = new URL(`${base}/api/v1/basisprofielen/${encodeURIComponent(kvkNummer)}`);
       url.searchParams.set('geoData', String(geoData));
       
-      // CORS proxy toevoegen
-      const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url.toString())}`;
+      // CORS proxy toevoegen - gebruik get mode om headers door te geven
+      const targetUrl = url.toString();
+      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
       
-      const res = await fetch(proxyUrl, { 
-        headers: { 'apikey': apikey },
-        method: 'GET'
-      });
+      const res = await fetch(proxyUrl);
       
       if (!res.ok) {
         let body = '';
         try { body = await res.text(); } catch {}
         const err = new Error(`Basisprofiel request faalde`);
-        err.details = { status: res.status, statusText: res.statusText, url: url.toString(), body };
+        err.details = { status: res.status, statusText: res.statusText, url: targetUrl, body };
         throw err;
       }
-      return res.json();
+      
+      const proxyResponse = await res.json();
+      
+      // AllOrigins geeft de data terug in een contents veld
+      if (proxyResponse.contents) {
+        return JSON.parse(proxyResponse.contents);
+      }
+      
+      throw new Error('Onverwachte response van proxy');
     }
 
     function extractLatLonFromObject(obj) {
