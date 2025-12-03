@@ -58,8 +58,8 @@
     
     <div class="header-row">
       <div class="controls" style="flex: 1;">
-        <label style="flex: 1; min-width: 200px;">KVK-nummer of naam
-          <input id="kvkInput" placeholder="bv. 69599068 of 'Global Conron'" />
+        <label style="flex: 1; min-width: 200px;">KVK-nummer of naam (optioneel)
+          <input id="kvkInput" placeholder="bv. 69599068 of 'Global Conron' (leeg = alle)" />
         </label>
         
         <div class="filter-group">
@@ -98,7 +98,7 @@
   <main>
     <aside id="sidebar">
       <div class="section">
-        <div id="summary" class="muted">Vul een KVK-nummer (8 cijfers) of (deel van) een naam in en klik "Zoek / haal op". Bij naam: basisprofielen worden automatisch opgehaald en geplot. Gebruik de extra filters voor gedetailleerder zoeken.</div>
+        <div id="summary" class="muted">Zoek op KVK-nummer (8 cijfers), naam, plaats, straat of een combinatie. Alle basisprofielen worden automatisch opgehaald en geplot. Minstens één zoekveld moet ingevuld zijn.</div>
         <div id="results"></div>
       </div>
     </aside>
@@ -437,8 +437,9 @@
       const resultatenPerPagina = parseInt(resultatenPerPaginaEl.value, 10);
       const usedGeo = !!useGeoDataEl.checked;
       
-      if (!query) { 
-        showError('Vul een KVK-nummer of (deel van) een naam in.'); 
+      // Check of er minimaal iets is ingevuld
+      if (!query && !plaats && !straatnaam && !type) { 
+        showError('Vul minimaal één zoekveld in (naam, plaats, straat of type).'); 
         return; 
       }
 
@@ -455,11 +456,11 @@
           fitToFeatures();
           summaryEl.textContent = `Basisprofiel geladen (${bp.kvkNummer})`;
         } else {
-          // Naam → zoeken met filters, alles automatisch ophalen en plotten
+          // Naam of filters → zoeken, alles automatisch ophalen en plotten
           const zoek = await kvkZoekOpNaam({ 
             base, 
             apikey, 
-            naam: query, 
+            naam: query || '', // lege string als er geen naam is
             plaats, 
             straatnaam, 
             type,
@@ -469,11 +470,12 @@
           await renderZoekResultatenAuto(zoek, { base, apikey, usedGeo });
           
           const filters = [];
+          if (query) filters.push(`naam: ${query}`);
           if (plaats) filters.push(`plaats: ${plaats}`);
           if (straatnaam) filters.push(`straat: ${straatnaam}`);
           if (type) filters.push(`type: ${type}`);
           const filterText = filters.length ? ` (${filters.join(', ')})` : '';
-          summaryEl.textContent = `Zoekopdracht uitgevoerd: "${query}"${filterText} (alles geplot)`;
+          summaryEl.textContent = `Zoekopdracht uitgevoerd${filterText} — ${zoek.totaal} resultaten`;
         }
 
         showStatus('');
@@ -493,9 +495,6 @@ Tip: controleer API key / test endpoint / invoer.`);
 
     btnGet.addEventListener('click', btnHandler);
     kvkInputEl.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') btnHandler(); });
-
-    // Demo: prefill
-    kvkInputEl.value = '69599068';
   </script>
 </body>
 </html>
