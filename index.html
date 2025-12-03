@@ -3,17 +3,21 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>KVK Zoeken + Auto-plot (Test)</title>
+  <title>KVK Zoeken + Auto-plot (Uitgebreid)</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@latest/ol.css" />
   <style>
     body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
-    header { padding: 12px 16px; border-bottom: 1px solid #eee; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+    header { padding: 12px 16px; border-bottom: 1px solid #eee; }
+    .header-row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom: 8px; }
+    .header-row:last-child { margin-bottom: 0; }
     header h1 { font-size: 18px; margin: 0 8px 0 0; }
     .controls { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-    label { font-size: 12px; color:#555; }
+    label { font-size: 12px; color:#555; display: flex; flex-direction: column; gap: 4px; }
     input, select, button { padding:8px 10px; border:1px solid #ccc; border-radius:8px; font-size:14px; }
-    button { cursor:pointer; }
-    main { display:grid; grid-template-columns: 420px 1fr; gap:0; height: calc(100vh - 58px); }
+    button { cursor:pointer; background: white; }
+    button:hover { background: #f9fafb; }
+    button:active { background: #f3f4f6; }
+    main { display:grid; grid-template-columns: 420px 1fr; gap:0; height: calc(100vh - 110px); }
     #sidebar { border-right:1px solid #eee; overflow:auto; }
     #map { width:100%; height:100%; }
     .section { padding: 12px 14px; }
@@ -28,36 +32,73 @@
     .ok { color:#065f46; border-color:#d1fae5; background:#ecfdf5; }
     .warn { color:#7c2d12; border-color:#fed7aa; background:#fffbeb; }
     .info { color:#1e40af; border-color:#bfdbfe; background:#eff6ff; }
+    .filter-group { display: flex; gap: 8px; flex-wrap: wrap; }
+    .filter-group > label { min-width: 140px; }
   </style>
 </head>
 <body>
   <header>
-    <h1>KVK Basisprofiel ↔ Naamzoek → Auto-plot</h1>
-    <div class="controls">
-      <label>API-base
-        <select id="apiBase">
-          <option value="https://developers.kvk.nl/test">developers.kvk.nl/test</option>
-          <option value="https://api.kvk.nl/test">api.kvk.nl/test</option>
-        </select>
-      </label>
-      <label style="min-width:280px;">API key
-        <input id="apiKey" value="l7xx1f2691f2520d487b902f4e0b57a0b197" />
-      </label>
-      <label class="row" title="Gebruik KVK geoData voor coordinaten (zo beschikbaar)">
-        <input type="checkbox" id="useGeoData" /> geoData gebruiken
-      </label>
-      <label>KVK-nummer of naam
-        <input id="kvkInput" placeholder="bv. 69599068 of 'Global Conron'" />
-      </label>
-      <button id="btnGet">Zoek / haal op</button>
-      <span id="status" class="muted"></span>
+    <div class="header-row">
+      <h1>KVK Basisprofiel ↔ Naamzoek → Auto-plot</h1>
+      <div class="controls">
+        <label>API-base
+          <select id="apiBase">
+            <option value="https://developers.kvk.nl/test">developers.kvk.nl/test</option>
+            <option value="https://api.kvk.nl/test">api.kvk.nl/test</option>
+          </select>
+        </label>
+        <label style="min-width:280px;">API key
+          <input id="apiKey" value="l7xx1f2691f2520d487b902f4e0b57a0b197" />
+        </label>
+        <label class="row" title="Gebruik KVK geoData voor coordinaten (zo beschikbaar)">
+          <input type="checkbox" id="useGeoData" /> geoData gebruiken
+        </label>
+      </div>
+    </div>
+    
+    <div class="header-row">
+      <div class="controls" style="flex: 1;">
+        <label style="flex: 1; min-width: 200px;">KVK-nummer of naam
+          <input id="kvkInput" placeholder="bv. 69599068 of 'Global Conron'" />
+        </label>
+        
+        <div class="filter-group">
+          <label>Plaats
+            <input id="plaatsInput" placeholder="bv. Veendam" />
+          </label>
+          
+          <label>Straatnaam
+            <input id="straatnaamInput" placeholder="bv. Rietdekkershof" />
+          </label>
+          
+          <label>Type
+            <select id="typeSelect">
+              <option value="">Alle</option>
+              <option value="hoofdvestiging">Hoofdvestiging</option>
+              <option value="nevenvestiging">Nevenvestiging</option>
+            </select>
+          </label>
+          
+          <label>Resultaten per pagina
+            <select id="resultatenPerPagina">
+              <option value="10">10</option>
+              <option value="25">25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+          </label>
+        </div>
+        
+        <button id="btnGet">Zoek / haal op</button>
+        <span id="status" class="muted"></span>
+      </div>
     </div>
   </header>
 
   <main>
     <aside id="sidebar">
       <div class="section">
-        <div id="summary" class="muted">Vul een KVK-nummer (8 cijfers) of (deel van) een naam in en klik “Zoek / haal op”. Bij naam: basisprofielen worden automatisch opgehaald en geplot.</div>
+        <div id="summary" class="muted">Vul een KVK-nummer (8 cijfers) of (deel van) een naam in en klik "Zoek / haal op". Bij naam: basisprofielen worden automatisch opgehaald en geplot. Gebruik de extra filters voor gedetailleerder zoeken.</div>
         <div id="results"></div>
       </div>
     </aside>
@@ -128,10 +169,10 @@
             const data = cfg.isAllOrigins ? JSON.parse((await res.json()).contents) : await res.json();
             return data;
           } catch (e) {
-            lastErr = e; // volgende proxy proberen
+            lastErr = e;
           }
         }
-        await new Promise(r => setTimeout(r, 300 + attempt * 300)); // backoff
+        await new Promise(r => setTimeout(r, 300 + attempt * 300));
       }
       throw lastErr || new Error('Proxy chain failed');
     }
@@ -143,9 +184,12 @@
       return await fetchJSONWithProxy(url.toString(), { retries: 2, timeoutMs: 12000 });
     }
 
-    async function kvkZoekOpNaam({ base, apikey, naam, pagina = 1, resultatenPerPagina = 10 }) {
+    async function kvkZoekOpNaam({ base, apikey, naam, plaats, straatnaam, type, pagina = 1, resultatenPerPagina = 10 }) {
       const url = new URL(`${base}/api/v2/zoeken`);
       url.searchParams.set('naam', naam);
+      if (plaats) url.searchParams.set('plaats', plaats);
+      if (straatnaam) url.searchParams.set('straatnaam', straatnaam);
+      if (type) url.searchParams.set('type', type);
       url.searchParams.set('pagina', String(pagina));
       url.searchParams.set('resultatenPerPagina', String(resultatenPerPagina));
       return await fetchJSONWithProxy(url.toString(), { retries: 2, timeoutMs: 12000 });
@@ -219,16 +263,16 @@
       return null;
     }
 
-function sbiHTML(bp) {
-  const sbi = Array.isArray(bp?.sbiActiviteiten) ? bp.sbiActiviteiten : [];
-  if (!sbi.length) return '<span class="muted">Geen SBI-activiteiten gevonden</span>';
-  return sbi.map(x => {
-    const hoofd = (String(x.indHoofdactiviteit || '').toLowerCase() === 'ja') ? ' (hoofd)' : '';
-    const code = x.sbiCode ? `SBI ${x.sbiCode}${hoofd}` : `SBI${hoofd}`;
-    const oms = x.sbiOmschrijving ? `<span class="muted">${x.sbiOmschrijving}</span>` : '';
-    return `<div><span class="badge">${code}</span> ${oms}</div>`;
-  }).join('');
-}    
+    function sbiHTML(bp) {
+      const sbi = Array.isArray(bp?.sbiActiviteiten) ? bp.sbiActiviteiten : [];
+      if (!sbi.length) return '<span class="muted">Geen SBI-activiteiten gevonden</span>';
+      return sbi.map(x => {
+        const hoofd = (String(x.indHoofdactiviteit || '').toLowerCase() === 'ja') ? ' (hoofd)' : '';
+        const code = x.sbiCode ? `SBI ${x.sbiCode}${hoofd}` : `SBI${hoofd}`;
+        const oms = x.sbiOmschrijving ? `<span class="muted">${x.sbiOmschrijving}</span>` : '';
+        return `<div><span class="badge">${code}</span> ${oms}</div>`;
+      }).join('');
+    }    
 
     function addressFromBasisprofiel(bp) {
       const eig = bp._embedded?.eigenaar;
@@ -243,7 +287,7 @@ function sbiHTML(bp) {
         if (a.volledigAdres) return a.volledigAdres.trim();
         const parts = [];
         if (a.straatnaam) parts.push(a.straatnaam);
-        if (a.huisnummer) parts.push(String(a.huisnummer) + (a.huisletter || ''));   <!-- FIX: '||' i.p.v. 'of' -->
+        if (a.huisnummer) parts.push(String(a.huisnummer) + (a.huisletter || ''));
         if (a.huisnummertoevoeging) parts.push(a.huisnummertoevoeging);
         const street = parts.join(' ');
         const city = [a.postcode, a.plaats].filter(Boolean).join(' ');
@@ -279,6 +323,10 @@ function sbiHTML(bp) {
     const apiKeyEl = document.getElementById('apiKey');
     const useGeoDataEl = document.getElementById('useGeoData');
     const kvkInputEl = document.getElementById('kvkInput');
+    const plaatsInputEl = document.getElementById('plaatsInput');
+    const straatnaamInputEl = document.getElementById('straatnaamInput');
+    const typeSelectEl = document.getElementById('typeSelect');
+    const resultatenPerPaginaEl = document.getElementById('resultatenPerPagina');
     const btnGet = document.getElementById('btnGet');
     const resultsEl = document.getElementById('results');
     const statusEl = document.getElementById('status');
@@ -293,40 +341,40 @@ function sbiHTML(bp) {
       resultsEl.prepend(div);
     }
 
-function renderBasisprofielCard(bp, { plotted=false, error=null }) {
-  const card = document.createElement('div');
-  card.className = 'result stack';
+    function renderBasisprofielCard(bp, { plotted=false, error=null }) {
+      const card = document.createElement('div');
+      card.className = 'result stack';
 
-  const title = document.createElement('h3');
-  title.textContent = `${bp.naam || bp.statutaireNaam || '(naam onbekend)'} — ${bp.kvkNummer || ''}`;
-  card.appendChild(title);
+      const title = document.createElement('h3');
+      title.textContent = `${bp.naam || bp.statutaireNaam || '(naam onbekend)'} — ${bp.kvkNummer || ''}`;
+      card.appendChild(title);
 
-  const line = document.createElement('div');
-  line.innerHTML = plotted
-    ? `<span class="chip ok">Geplot ✓</span>`
-    : error
-      ? `<span class="chip warn" title="${String(error)}">Niet geplot ⚠</span>`
-      : `<span class="chip info">Laden…</span>`;
-  card.appendChild(line);
+      const line = document.createElement('div');
+      line.innerHTML = plotted
+        ? `<span class="chip ok">Geplot ✓</span>`
+        : error
+          ? `<span class="chip warn" title="${String(error)}">Niet geplot ⚠</span>`
+          : `<span class="chip info">Laden…</span>`;
+      card.appendChild(line);
 
-  // Adres (indien aanwezig)
-  const addr = addressFromBasisprofiel(bp);
-  if (addr) {
-    const addrDiv = document.createElement('div');
-    addrDiv.className = 'muted';
-    addrDiv.innerHTML = `<span class="badge">adres:</span> ${addr}`;
-    card.appendChild(addrDiv);
-  }
+      // Adres (indien aanwezig)
+      const addr = addressFromBasisprofiel(bp);
+      if (addr) {
+        const addrDiv = document.createElement('div');
+        addrDiv.className = 'muted';
+        addrDiv.innerHTML = `<span class="badge">adres:</span> ${addr}`;
+        card.appendChild(addrDiv);
+      }
 
-  // ✅ SBI-blok
-  const sbiDiv = document.createElement('div');
-  sbiDiv.className = 'stack';
-  sbiDiv.innerHTML = sbiHTML(bp);
-  card.appendChild(sbiDiv);
+      // SBI-blok
+      const sbiDiv = document.createElement('div');
+      sbiDiv.className = 'stack';
+      sbiDiv.innerHTML = sbiHTML(bp);
+      card.appendChild(sbiDiv);
 
-  resultsEl.appendChild(card);
-  return card;
-}
+      resultsEl.appendChild(card);
+      return card;
+    }
 
     function updateChip(container, { text, add = [], remove = [] }) {
       const chip = container.querySelector('.chip');
@@ -383,8 +431,16 @@ function renderBasisprofielCard(bp, { plotted=false, error=null }) {
       const base = apiBaseEl.value;
       const apikey = apiKeyEl.value.trim();
       const query = kvkInputEl.value.trim();
+      const plaats = plaatsInputEl.value.trim();
+      const straatnaam = straatnaamInputEl.value.trim();
+      const type = typeSelectEl.value;
+      const resultatenPerPagina = parseInt(resultatenPerPaginaEl.value, 10);
       const usedGeo = !!useGeoDataEl.checked;
-      if (!query) { showError('Vul een KVK-nummer of (deel van) een naam in.'); return; }
+      
+      if (!query) { 
+        showError('Vul een KVK-nummer of (deel van) een naam in.'); 
+        return; 
+      }
 
       try {
         showStatus('Bezig…');
@@ -399,10 +455,25 @@ function renderBasisprofielCard(bp, { plotted=false, error=null }) {
           fitToFeatures();
           summaryEl.textContent = `Basisprofiel geladen (${bp.kvkNummer})`;
         } else {
-          // Naam → zoeken, alles automatisch ophalen en plotten
-          const zoek = await kvkZoekOpNaam({ base, apikey, naam: query, pagina: 1, resultatenPerPagina: 10 });
+          // Naam → zoeken met filters, alles automatisch ophalen en plotten
+          const zoek = await kvkZoekOpNaam({ 
+            base, 
+            apikey, 
+            naam: query, 
+            plaats, 
+            straatnaam, 
+            type,
+            pagina: 1, 
+            resultatenPerPagina 
+          });
           await renderZoekResultatenAuto(zoek, { base, apikey, usedGeo });
-          summaryEl.textContent = `Zoekopdracht uitgevoerd: “${query}” (alles geplot)`;
+          
+          const filters = [];
+          if (plaats) filters.push(`plaats: ${plaats}`);
+          if (straatnaam) filters.push(`straat: ${straatnaam}`);
+          if (type) filters.push(`type: ${type}`);
+          const filterText = filters.length ? ` (${filters.join(', ')})` : '';
+          summaryEl.textContent = `Zoekopdracht uitgevoerd: "${query}"${filterText} (alles geplot)`;
         }
 
         showStatus('');
